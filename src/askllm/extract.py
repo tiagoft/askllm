@@ -1,8 +1,9 @@
 from .models.llm import make_ollama_model
-from .models.data import Answer, AllAnswers
+from .models.data import AllAnswers
 import toml
 from pathlib import Path
 from pydantic_ai import Agent
+from pydantic_ai.run import AgentRunResult
 from pydantic import BaseModel
 
 class AnyAnswer(BaseModel):
@@ -18,13 +19,14 @@ class Extractor:
             questions = toml.load(f)
             self.prompt = questions["prompt"]
 
-    def extract(self, text: str) -> AllAnswers:
+    def extract(self, text: str) -> AgentRunResult[AllAnswers]:
         agent = Agent(
             self.model,
             output_type=AllAnswers,
             instructions = self.prompt.format(text=text),
+            retries=5,
         )
-        result = agent.run_sync()
+        result = agent.run_sync("")
         return result
     
     def any_prompt(self, prompt: str):
@@ -32,12 +34,13 @@ class Extractor:
             self.model,
             output_type=AnyAnswer,
             instructions = prompt,
+            retries=5,
 
         )
         result = agent.run_sync("")
         return result
 
-    def __call__(self, text: str) -> AllAnswers:
+    def __call__(self, text: str) -> AgentRunResult[AllAnswers]:
         return self.extract(text)
 
 class GetQuestions():
