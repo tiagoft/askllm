@@ -8,6 +8,7 @@ from pprint import pformat
 from pathlib import Path
 import fitz
 from tqdm import tqdm
+from pydantic_ai.exceptions import ModelHTTPError
 
 BATCH_SIZE = 5
 CACHE_FILE = Path(".llm_cache.json")
@@ -30,6 +31,8 @@ def cached_extract(extractor: Extractor, text: str, cache: dict):
     if key in cache:
         return AllAnswers.model_validate(cache[key]["output"]), None
     resultado = extractor.extract(text)
+    if resultado is None:
+        return None, None
     cache[key] = {"output": resultado.output.model_dump()}
     save_cache(cache)
     return resultado.output, resultado.usage()
@@ -37,6 +40,8 @@ def cached_extract(extractor: Extractor, text: str, cache: dict):
 def merge_all_answers(batch_results: list[AllAnswers]) -> AllAnswers:
     merged: dict[str, Answer] = {}
     for result in batch_results:
+        if result is None:
+            continue
         for answer in result.answers:
             qid = answer.question_id
             if qid not in merged:
@@ -65,12 +70,16 @@ def operate_on_path(pdf_path: Path, extractor: Extractor, cache: dict):
     batches = range(0, len(pages), BATCH_SIZE)
     batch_results = []
     total_usage = None
-    for start in tqdm(batches, desc=pdf_path.name, leave=False, position=1):
-        batch_text = "".join(pages[start:start + BATCH_SIZE])
-        output, usage = cached_extract(extractor, batch_text, cache)
-        batch_results.append(output)
-        if usage is not None:
-            total_usage = usage if total_usage is None else total_usage + usage
+    try:
+        for start in tqdm(batches, desc=pdf_path.name, leave=False, position=1):
+            batch_text = "".join(pages[start:start + BATCH_SIZE])
+            output, usage = cached_extract(extractor, batch_text, cache)
+            batch_results.append(output)
+            if usage is not None:
+                total_usage = usage if total_usage is None else total_usage + usage
+    except ModelHTTPError as e:
+        print(f"Skipping {pdf_path} due to model error: {e}")
+        return None, None
 
     merged = merge_all_answers(batch_results)
     questions = get_questions(merged)

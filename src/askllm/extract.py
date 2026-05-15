@@ -26,7 +26,11 @@ class Extractor:
             instructions = self.prompt.format(text=text),
             retries=5,
         )
-        result = agent.run_sync("")
+        try:
+            result = agent.run_sync("")
+        except Exception as e:
+            print(f"Error in extract: {e}")
+            return None
         return result
     
     def any_prompt(self, prompt: str):
@@ -34,10 +38,14 @@ class Extractor:
             self.model,
             output_type=AnyAnswer,
             instructions = prompt,
-            retries=5,
+            retries=10,
 
         )
-        result = agent.run_sync("")
+        try:
+            result = agent.run_sync("")
+        except Exception as e:
+            print(f"Error in any_prompt: {e}")
+            return None
         return result
 
     def __call__(self, text: str) -> AgentRunResult[AllAnswers]:
