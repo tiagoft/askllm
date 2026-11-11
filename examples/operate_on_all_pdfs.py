@@ -3,7 +3,8 @@ import hashlib
 import json
 import askllm
 from askllm.extract import Extractor, GetQuestions
-from askllm.models.data import AllAnswers, Answer
+from askllm.models.data import AllAnswers, Answer, normalize_question_id
+from askllm.verify import MERGE_SEPARATOR, merged_excerpt_scores, normalize
 from pprint import pformat
 from pathlib import Path
 import fitz
@@ -29,7 +30,11 @@ def save_cache(cache: dict):
 def cached_extract(extractor: Extractor, text: str, cache: dict):
     key = hashlib.sha256(text.encode()).hexdigest()
     if key in cache:
-        return AllAnswers.model_validate(cache[key]["output"]), None
+        # Older cache entries may hold question ids the schema now rejects
+        # (e.g. 'model_type'); drop those answers instead of failing the batch.
+        answers = [a for a in cache[key]["output"]["answers"]
+                   if normalize_question_id(a.get("question_id", ""))]
+        return AllAnswers.model_validate({"answers": answers}), None
     resultado = extractor.extract(text)
     if resultado is None:
         return None, None
@@ -51,7 +56,7 @@ def merge_all_answers(batch_results: list[AllAnswers]) -> AllAnswers:
                     merged[qid] = Answer(
                         question_id=qid,
                         answer=True,
-                        excerpt=merged[qid].excerpt + " | " + answer.excerpt,
+                        excerpt=merged[qid].excerpt + MERGE_SEPARATOR + answer.excerpt,
                     )
                 else:
                     merged[qid] = answer
@@ -83,7 +88,21 @@ def operate_on_path(pdf_path: Path, extractor: Extractor, cache: dict):
 
     merged = merge_all_answers(batch_results)
     questions = get_questions(merged)
+    add_excerpt_scores(questions, "".join(pages))
     return questions, total_usage
+
+def add_excerpt_scores(questions: dict, document_text: str):
+    """Attach fuzzy-match scores (0-100) showing whether each excerpt is really in the document.
+
+    excerpt_scores has one entry per merged excerpt part; excerpt_score is the best
+    of them (does at least one real quote back the answer?).
+    """
+    normalized = normalize(document_text)
+    for qdata in questions.values():
+        scores = merged_excerpt_scores(qdata["excerpt"], normalized)
+        qdata["excerpt_scores"] = scores
+        valid = [s for s in scores if s is not None]
+        qdata["excerpt_score"] = max(valid) if valid else None
 
 def main():
     parser = argparse.ArgumentParser()
